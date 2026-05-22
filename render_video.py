@@ -1,6 +1,8 @@
 import os, requests, json, subprocess
 import moviepy.editor as mpe
 from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip, CompositeVideoClip, TextClip, concatenate_videoclips, vfx, afx, ImageClip, ColorClip
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 HINDI_FONT_FILE = "Hindi.ttf"
 
@@ -26,7 +28,7 @@ current_time = 0.0
 
 try:
     whoosh_sfx = AudioFileClip("whoosh.mp3").volumex(0.25)
-    pop_sfx = AudioFileClip("pop.mp3").volumex(0.15)       
+    pop_sfx = AudioFileClip("pop.mp3").volumex(0.15)        
 except:
     whoosh_sfx = pop_sfx = None
 
@@ -171,17 +173,29 @@ payload = {
     "youtube_url": video_link
 }
 
+# --- NEW ROBUST RETRY LOGIC ---
+# Set up a resilient session
+session = requests.Session()
+retries = Retry(
+    total=5,  # Try 5 times
+    backoff_factor=2,  # Wait 2s, 4s, 8s, etc., between retries
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["POST"]
+)
+session.mount('https://', HTTPAdapter(max_retries=retries))
+
 try:
-    requests.post(webhook_url, json=payload, timeout=15)
+    print(f"Sending webhook to: {webhook_url}")
+    session.post(webhook_url, json=payload, timeout=15)
 except Exception as e:
-    print(f"Warning: Standard Webhook unreachable. Error: {e}")
+    print(f"Warning: Standard Webhook failed after retries. Error: {e}")
 
 if resume_url:
     print(f"Resuming n8n workflow at: {resume_url}")
     try:
-        response = requests.post(resume_url, json={"body": payload}, timeout=15)
+        response = session.post(resume_url, json={"body": payload}, timeout=15)
         print(f"n8n Resume Response: {response.status_code} - {response.text}")
     except Exception as e:
-        print(f"Warning: Failed to resume n8n. Error: {e}")
+        print(f"Warning: Failed to resume n8n after retries. Error: {e}")
 else:
     print("No RESUME_URL provided by n8n. Skipping resume step.")
